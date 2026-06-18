@@ -1,0 +1,135 @@
+#include "esp_camera.h"
+#include <WiFi.h>
+
+// --- AI THINKER PINOUT DEFINITIONS ---
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM      0
+#define SIOD_GPIO_NUM     26
+#define SIOC_GPIO_NUM     27
+#define Y9_GPIO_NUM       35
+#define Y8_GPIO_NUM       34
+#define Y7_GPIO_NUM       39
+#define Y6_GPIO_NUM       36
+#define Y5_GPIO_NUM       21
+#define Y4_GPIO_NUM       19
+#define Y3_GPIO_NUM       18
+#define Y2_GPIO_NUM        5
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     23
+#define PCLK_GPIO_NUM     22
+
+// Indicator Pin (Onboard Flash or external LED/Buzzer)
+const int ALERT_PIN = 4; 
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(ALERT_PIN, OUTPUT);
+  digitalWrite(ALERT_PIN, LOW);
+
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sscb_sda = SIOD_GPIO_NUM;
+  config.pin_sscb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  
+  // CRITICAL: We use PIXFORMAT_RGB565 or PIXFORMAT_YUV422 to read raw pixel colors.
+  // JPEG format compresses pixels, making direct color checking impossible without decoding.
+  config.pixel_format = PIXFORMAT_RGB565; 
+  config.frame_size = FRAMESIZE_QVGA;    // 320x240 resolution (Fast processing)
+  config.fb_count = 1;
+
+  // Camera Init
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Camera init failed with error 0x%x", err);
+    return;
+  }
+  Serial.println("Areca Eye: Embedded Color Analytics Online.");
+}
+
+void loop() {
+  // Capture a frame
+  camera_fb_t * fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("Frame capture failed");
+    delay(1000);
+    return;
+  }
+
+  int w = fb->width;
+  int h = fb->height;
+
+  // Define a 60x60 calculation box right in the center of the 320x240 frame
+  int box_w = 60;
+  int box_h = 60;
+  int start_x = (w - box_w) / 2;
+  int start_y = (h - box_h) / 2;
+
+  int yellow_pixel_count = 0;
+  int total_pixels = box_w * box_h;
+
+  // Cast buffer to uint16_t because RGB565 data uses 2 bytes per pixel
+  uint16_t *rgb_buffer = (uint16_t *)fb->buf;
+
+  // Loop through the Region of Interest (ROI) bounding box
+  for (int y = start_y; y < start_y + box_h; y++) {
+    for (int x = start_x; x < start_x + box_w; x++) {
+      
+      // Get memory index of current pixel
+      int pixel_index = y * w + x;
+      uint16_t pixel = rgb_buffer[pixel_index];
+
+      // Extract RGB channels from RGB565 format
+      // (Bit shifting math required to isolate 5 bits Red, 6 bits Green, 5 bits Blue)
+      uint8_t r = (pixel >> 11) & 0x1F;
+      uint8_t g = (pixel >> 5) & 0x3F;
+      uint8_t b = pixel & 0x1F;
+
+      // Scale up channels to standard 0-255 ranges for logical comparison
+      r = (r * 255) / 31;
+      g = (g * 255) / 63;
+      b = (b * 255) / 31;
+
+      // EMBEDDED YELLOW THRESHOLD: 
+      // Yellow occurs when Red and Green channels are both high, and Blue is low.
+      if (r > 130 && g > 120 && b < 90) {
+        yellow_pixel_count++;
+      }
+    }
+  }
+
+  // Calculate percentage of yellow inside our center window
+  float yellow_ratio = ((float)yellow_pixel_count / total_pixels) * 100.0;
+
+  // Print results directly out to Serial Monitor
+  Serial.printf("ROI Scan -> Yellow Concentration: %.2f%%\t| ", yellow_ratio);
+
+  if (yellow_ratio > 8.0) { // Same 8% threshold from your Python script
+    Serial.println("STATUS: ALERT! YELLOW LEAF DETECTED");
+    digitalWrite(ALERT_PIN, HIGH); // Light up LED or buzz buzzer
+  } else {
+    Serial.println("STATUS: HEALTHY");
+    digitalWrite(ALERT_PIN, LOW);
+  }
+
+  // Return frame buffer memory to avoid memory leaks/crashes
+  esp_camera_fb_return(fb);
+
+  delay(500); // Check twice every second
+}
