@@ -1,0 +1,47 @@
+const int SOIL_PIN = A0;  // Analog pin connected to the sensor AO
+
+// Calibration values (Adjust these if your sensor readings feel inverted)
+// Standard resistive sensors read ~1023 in completely dry air and ~200 fully submerged in water.
+const int DRY_VALUE = 1023; 
+const int WET_VALUE = 200;  
+
+void setup() {
+  Serial.begin(9600); // Standard serial baud rate
+  pinMode(SOIL_PIN, INPUT);
+  
+  Serial.println("\n=====================================");
+  Serial.println("  ARECA EYE: SOIL MOISTURE NODE ACTIVE ");
+  Serial.println("=====================================");
+}
+
+void loop() {
+  // 1. Read the raw analog value (0 to 1023)
+  int rawValue = analogRead(SOIL_PIN);
+
+  // 2. Map the raw value to a percentage (0% to 100%)
+  // We place DRY_VALUE first because higher voltage often means drier soil on these boards.
+  int moisturePercent = map(rawValue, DRY_VALUE, WET_VALUE, 0, 100);
+
+  // 3. Constrain the percentage between 0% and 100% to handle extreme spikes
+  moisturePercent = constrain(moisturePercent, 0, 100);
+
+  // 4. Determine field condition status
+  String condition = "";
+  if (moisturePercent < 30) {
+    condition = "CRITICAL: DRY SOIL (Needs Irrigation)";
+  } else if (moisturePercent > 80) {
+    condition = "ALERT: OVERWATERED (Risk of Root Rot)";
+  } else {
+    condition = "OPTIMAL: IDEAL MOISTURE";
+  }
+
+  // 5. Print out the structured data for presentation
+  Serial.print("Raw Signal: ");
+  Serial.print(rawValue);
+  Serial.print("  |  Moisture Level: ");
+  Serial.print(moisturePercent);
+  Serial.print("%  |  Status: ");
+  Serial.println(condition);
+
+  delay(1500); // Stable 1.5 second refresh rate
+}
